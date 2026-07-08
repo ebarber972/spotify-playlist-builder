@@ -27,6 +27,7 @@ SOUNDTRACK_WORDS = [
     "soundtrack", "motion picture", "music from"
 ]
 
+
 def normalize(value: str) -> str:
     value = value or ""
     value = value.lower()
@@ -37,6 +38,7 @@ def normalize(value: str) -> str:
     value = re.sub(r"\s+", " ", value).strip()
     return value
 
+
 def normalize_keep_versions(value: str) -> str:
     value = value or ""
     value = value.lower()
@@ -45,12 +47,27 @@ def normalize_keep_versions(value: str) -> str:
     value = re.sub(r"\s+", " ", value).strip()
     return value
 
+
 def contains_any(text: str, words: list[str]) -> bool:
     t = normalize_keep_versions(text)
     return any(w in t for w in words)
 
+
 def version_text(track: SpotifyTrack) -> str:
     return f"{track.title} {track.album}"
+
+
+def is_bad_version(track: SpotifyTrack) -> bool:
+    return contains_any(version_text(track), BAD_VERSION_WORDS)
+
+
+def is_live_version(track: SpotifyTrack) -> bool:
+    return contains_any(version_text(track), LIVE_WORDS)
+
+
+def is_compilation(track: SpotifyTrack) -> bool:
+    return (track.album_type or "").lower() == "compilation" or contains_any(track.album, COMPILATION_WORDS)
+
 
 def release_year(track: SpotifyTrack) -> int:
     if not track.release_date:
@@ -60,14 +77,17 @@ def release_year(track: SpotifyTrack) -> int:
     except Exception:
         return 9999
 
+
 def duration_bucket(duration_ms: int) -> int:
     # 3-second buckets are close enough to group the same recording across releases.
     return round((duration_ms or 0) / 3000)
+
 
 def duplicate_key(track: SpotifyTrack) -> str:
     if track.isrc:
         return f"isrc:{track.isrc}"
     return f"fuzzy:{normalize(track.title)}|{normalize(track.artist)}|{duration_bucket(track.duration_ms)}"
+
 
 def score_candidate(
     wanted: InputTrack,
@@ -106,10 +126,10 @@ def score_candidate(
     vt = version_text(candidate)
     album_type = (candidate.album_type or "").lower()
 
-    if contains_any(vt, BAD_VERSION_WORDS):
+    if is_bad_version(candidate):
         return MatchResult(wanted, candidate, 0, "REJECTED", "bad version: karaoke/tribute/cover/remix/demo")
 
-    if contains_any(vt, LIVE_WORDS):
+    if is_live_version(candidate):
         if allow_live:
             score -= 5
             reasons.append("live allowed -5")
@@ -125,7 +145,6 @@ def score_candidate(
             score -= 20
             reasons.append("remaster -20")
 
-    # Spotify album type awareness
     if album_type == "album":
         score += 7
         reasons.append("album type +7")
@@ -144,7 +163,6 @@ def score_candidate(
         score -= 4
         reasons.append("soundtrack -4")
 
-    # Earliest release often means original album/single when same song appears many times.
     year = release_year(candidate)
     if wanted_year:
         if year == wanted_year:
@@ -179,6 +197,7 @@ def score_candidate(
     status = "MATCH" if score >= 78 else "NO_MATCH"
     return MatchResult(wanted, candidate, round(score, 2), status, "; ".join(reasons))
 
+
 def pick_best_match(
     wanted: InputTrack,
     candidates: list[SpotifyTrack],
@@ -193,4 +212,28 @@ def pick_best_match(
         for c in candidates
     ]
     scored.sort(key=lambda r: r.score, reverse=True)
+
+    # Prefer clean studio matches over live/compilation versions when scores are close enough.
+    clean_matches = [
+        r for r in scored
+        if r.spotify_track
+        and r.status == "MATCH"
+        and not is_bad_version(r.spotify_track)
+        and (allow_live or not is_live_version(r.spotify_track))
+        and not is_compilation(r.spotify_track)
+    ]
+    if clean_matches:
+        return clean_matches[0]
+
+    # If all good candidates are compilations, prefer those over live versions.
+    non_live_matches = [
+        r for r in scored
+        if r.spotify_track
+        and r.status == "MATCH"
+        and not is_bad_version(r.spotify_track)
+        and (allow_live or not is_live_version(r.spotify_track))
+    ]
+    if non_live_matches:
+        return non_live_matches[0]
+
     return scored[0]
