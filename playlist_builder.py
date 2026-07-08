@@ -10,35 +10,40 @@ from reorder import space_artists
 
 console = Console()
 
+
 def parse_bool(value: str) -> bool:
     return str(value).lower() in ("1", "true", "yes", "y")
 
-def build(args):
+
+def resolve_tracks(args, client: SpotifyClient):
     tracks = read_input_csv(args.csv)
-    if args.artist_gap and args.artist_gap > 0:
+    if getattr(args, "artist_gap", 0) and args.artist_gap > 0:
         tracks = space_artists(tracks, artist_gap=args.artist_gap)
 
-    if args.limit:
+    if getattr(args, "limit", 0):
         tracks = tracks[:args.limit]
 
     console.print(f"[bold]Loaded {len(tracks)} tracks from CSV[/bold]")
-
-    config = get_config()
-    client = SpotifyClient(config)
 
     results = []
     uris = []
     seen_uris = set()
     seen_recordings = set()
 
-    if args.playlist_id:
+    existing_uris = set()
+    if getattr(args, "playlist_id", ""):
         existing_uris = client.current_playlist_tracks(args.playlist_id)
         seen_uris.update(existing_uris)
         console.print(f"[bold]Loaded {len(existing_uris)} existing playlist URIs[/bold]")
 
     for idx, wanted in enumerate(tracks, start=1):
         console.print(f"[cyan]{idx}/{len(tracks)}[/cyan] Searching: {wanted.title} - {wanted.artist}")
-        candidates = client.search_tracks(wanted.title, wanted.artist, limit=args.search_limit)
+        candidates = client.search_tracks(
+            wanted.title,
+            wanted.artist,
+            album=wanted.album,
+            limit=args.search_limit,
+        )
         match = pick_best_match(
             wanted,
             candidates,
@@ -63,14 +68,16 @@ def build(args):
 
         results.append(match)
 
-    write_reports(results, args.report_dir)
+    return results, uris
 
+
+def print_summary(results, uris, title="Build Summary"):
     matched = sum(1 for r in results if r.status == "MATCH")
     missed = sum(1 for r in results if r.status == "NO_MATCH")
     duplicates = sum(1 for r in results if r.status == "DUPLICATE")
     rejected = sum(1 for r in results if r.status == "REJECTED")
 
-    table = Table(title="Build Summary")
+    table = Table(title=title)
     table.add_column("Result")
     table.add_column("Count", justify="right")
     table.add_row("Matched", str(matched))
@@ -79,6 +86,15 @@ def build(args):
     table.add_row("Rejected", str(rejected))
     table.add_row("URIs ready to add", str(len(uris)))
     console.print(table)
+
+
+def build(args):
+    config = get_config()
+    client = SpotifyClient(config)
+
+    results, uris = resolve_tracks(args, client)
+    write_reports(results, args.report_dir)
+    print_summary(results, uris)
 
     if args.dry_run:
         console.print("[yellow]Dry run only. No playlist created or changed.[/yellow]")
@@ -103,28 +119,65 @@ def build(args):
     console.print(f"[green]Playlist ID:[/green] {playlist_id}")
     console.print(f"Reports written to: {args.report_dir}")
 
+
+def sync(args):
+    """
+    Safe v1.1 sync: resolves the CSV against Spotify, compares to an existing playlist,
+    and adds only missing tracks. It never removes or reorders tracks yet.
+    """
+    if not args.playlist_id:
+        raise ValueError("sync requires --playlist-id")
+
+    config = get_config()
+    client = SpotifyClient(config)
+
+    results, uris = resolve_tracks(args, client)
+    write_reports(results, args.report_dir)
+    print_summary(results, uris, title="Sync Summary")
+
+    if args.dry_run:
+        console.print("[yellow]Dry run only. No playlist changed.[/yellow]")
+        console.print(f"Reports written to: {args.report_dir}")
+        return
+
+    client.add_tracks(args.playlist_id, uris)
+    console.print(f"[green]Added {len(uris)} missing tracks to existing playlist.[/green]")
+    console.print(f"[green]Playlist ID:[/green] {args.playlist_id}")
+    console.print(f"Reports written to: {args.report_dir}")
+
+
+def add_common_args(parser):
+    parser.add_argument("csv", help="Input CSV path with Title and Artist columns.")
+    parser.add_argument("--playlist-id", default="", help="Existing Spotify playlist ID.")
+    parser.add_argument("--dry-run", action="store_true", help="Search and report only. Do not create or modify playlist.")
+    parser.add_argument("--allow-live", action="store_true", help="Allow live versions.")
+    parser.add_argument("--no-remasters", action="store_true", help="Penalize remastered versions more heavily.")
+    parser.add_argument("--artist-gap", type=int, default=10, help="Try to keep same artist this many songs apart.")
+    parser.add_argument("--limit", type=int, default=0, help="Only process first N tracks.")
+    parser.add_argument("--search-limit", type=int, default=50, help="Spotify candidates per track.")
+    parser.add_argument("--report-dir", default="reports")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build exact Spotify playlists from CSV files.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     build_parser = sub.add_parser("build", help="Build a Spotify playlist from a CSV.")
-    build_parser.add_argument("csv", help="Input CSV path with Title and Artist columns.")
+    add_common_args(build_parser)
     build_parser.add_argument("--name", required=True, help="Spotify playlist name.")
-    build_parser.add_argument("--description", default="Built with Spotify Playlist Builder v2.")
-    build_parser.add_argument("--playlist-id", default="", help="Existing Spotify playlist ID to add tracks to instead of creating a new playlist.")
+    build_parser.add_argument("--description", default="Built with Spotify Playlist Builder v1.1.")
     build_parser.add_argument("--public", default=None, help="true or false. Defaults to SPOTIFY_PUBLIC.")
-    build_parser.add_argument("--dry-run", action="store_true", help="Search and report only. Do not create or modify playlist.")
-    build_parser.add_argument("--allow-live", action="store_true", help="Allow live versions.")
-    build_parser.add_argument("--no-remasters", action="store_true", help="Penalize remastered versions more heavily.")
-    build_parser.add_argument("--artist-gap", type=int, default=10, help="Try to keep same artist this many songs apart.")
-    build_parser.add_argument("--limit", type=int, default=0, help="Only process first N tracks.")
-    build_parser.add_argument("--search-limit", type=int, default=20, help="Spotify candidates per track.")
-    build_parser.add_argument("--report-dir", default="reports")
+
+    sync_parser = sub.add_parser("sync", help="Add missing CSV tracks to an existing Spotify playlist.")
+    add_common_args(sync_parser)
 
     args = parser.parse_args()
 
     if args.command == "build":
         build(args)
+    elif args.command == "sync":
+        sync(args)
+
 
 if __name__ == "__main__":
     main()
