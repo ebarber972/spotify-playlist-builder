@@ -1,9 +1,25 @@
+import re
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 from config import SpotifyConfig
 from models import SpotifyTrack
 
 SCOPES = "playlist-modify-private playlist-modify-public playlist-read-private"
+
+ARTIST_ALIASES = {
+    "Mötley Crüe": ["Motley Crue"],
+    "Queensrÿche": ["Queensryche"],
+    "L.A. Guns": ["LA Guns", "L A Guns"],
+    "W.A.S.P.": ["WASP", "W A S P"],
+    "Tora Tora": ["Tora-Tora"],
+    "Enuff Z'Nuff": ["Enuff Z Nuff", "Enuff Znuff"],
+    "D-A-D": ["DAD", "Disneyland After Dark"],
+}
+
+
+def quote(value: str) -> str:
+    return (value or "").replace('"', '')
+
 
 class SpotifyClient:
     def __init__(self, config: SpotifyConfig):
@@ -19,29 +35,64 @@ class SpotifyClient:
         )
         self.user_id = self.sp.current_user()["id"]
 
-    def search_tracks(self, title: str, artist: str, limit: int = 20) -> list[SpotifyTrack]:
-        queries = [
-            f'track:"{title}" artist:"{artist}"',
-            f'{title} artist:"{artist}"',
-            f'"{title}" "{artist}"',
-            f"{title} {artist}",
-        ]
+    def artist_variants(self, artist: str) -> list[str]:
+        variants = [artist]
+        variants.extend(ARTIST_ALIASES.get(artist, []))
 
+        # Punctuation-light fallback for metal bands that Spotify sometimes indexes differently.
+        plain = re.sub(r"[^A-Za-z0-9 ]+", " ", artist or "")
+        plain = re.sub(r"\s+", " ", plain).strip()
+        if plain and plain not in variants:
+            variants.append(plain)
+
+        return list(dict.fromkeys(v for v in variants if v))
+
+    def build_queries(self, title: str, artist: str, album: str = "") -> list[str]:
+        title_q = quote(title)
+        album_q = quote(album)
+        queries = []
+
+        for artist_variant in self.artist_variants(artist):
+            artist_q = quote(artist_variant)
+            if album_q:
+                queries.append(f'track:"{title_q}" artist:"{artist_q}" album:"{album_q}"')
+                queries.append(f'"{title_q}" "{artist_q}" "{album_q}"')
+            queries.append(f'track:"{title_q}" artist:"{artist_q}"')
+            queries.append(f'{title_q} artist:"{artist_q}"')
+            queries.append(f'"{title_q}" "{artist_q}"')
+            queries.append(f'{title_q} {artist_q}')
+
+        if album_q:
+            queries.append(f'"{title_q}" "{album_q}"')
+
+        queries.append(title_q)
+        return list(dict.fromkeys(q for q in queries if q.strip()))
+
+    def search_tracks(self, title: str, artist: str, album: str = "", limit: int = 20) -> list[SpotifyTrack]:
+        """
+        Search Spotify using multiple increasingly broad query tiers.
+        Returns a merged candidate pool, not just the first successful search page.
+        """
+        queries = self.build_queries(title, artist, album)
         seen = set()
         all_tracks = []
+        per_query_limit = max(10, min(limit, 50))
+        target_pool_size = max(limit, 50)
 
         for q in queries:
-            results = self.sp.search(q=q, type="track", limit=limit)
+            results = self.sp.search(q=q, type="track", limit=per_query_limit)
             tracks = results.get("tracks", {}).get("items", [])
             for item in tracks:
                 uri = item.get("uri")
                 if uri and uri not in seen:
                     seen.add(uri)
                     all_tracks.append(self._to_track(item))
-            if len(all_tracks) >= limit:
+
+            # Keep searching past the first page when the pool is small. This matters for deep cuts.
+            if len(all_tracks) >= target_pool_size:
                 break
 
-        return all_tracks[:limit]
+        return all_tracks[:target_pool_size]
 
     def _to_track(self, item: dict) -> SpotifyTrack:
         artists = ", ".join(a["name"] for a in item.get("artists", []))
