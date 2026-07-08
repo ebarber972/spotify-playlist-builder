@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  spotify-playlist-builder:
+    build: .
+    container_name: spotify-playlist-builder
+    working_dir: /app
+    volumes:
+      - .:/app
+    stdin_open: true
+    tty: true
+    command: sleep infinity
