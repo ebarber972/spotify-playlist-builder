@@ -1,5 +1,7 @@
+import re
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -22,6 +24,8 @@ PLAYLISTS = {
 }
 
 JOBS: dict[str, dict] = {}
+PROGRESS_RE = re.compile(r"^(\d+)/(\d+)\s+Searching:\s+(.+)$")
+MAX_LOG_LINES = 250
 
 
 class BuildRequest(BaseModel):
@@ -66,18 +70,48 @@ def make_command(action: str, playlist_key: str, request: BuildRequest) -> list[
     if request.dry_run:
         args.append("--dry-run")
 
-    return [sys.executable, "playlist_builder.py", *args]
+    return [sys.executable, "-u", "playlist_builder.py", *args]
+
+
+def append_log(job: dict, line: str) -> None:
+    job.setdefault("log_tail", []).append(line)
+    job["log_tail"] = job["log_tail"][-MAX_LOG_LINES:]
+    job["last_output_at"] = time.time()
+
+    match = PROGRESS_RE.match(line.strip())
+    if match:
+        current = int(match.group(1))
+        total = int(match.group(2))
+        track = match.group(3)
+        job["progress"] = {
+            "current": current,
+            "total": total,
+            "percent": round((current / total) * 100, 2) if total else 0,
+        }
+        job["current_track"] = track
+
+
+def read_stream(job_id: str, stream, key: str) -> None:
+    job = JOBS[job_id]
+    for line in iter(stream.readline, ""):
+        line = line.rstrip("\n")
+        if not line:
+            continue
+        if key == "stdout":
+            append_log(job, line)
+        else:
+            job.setdefault("stderr_tail", []).append(line)
+            job["stderr_tail"] = job["stderr_tail"][-MAX_LOG_LINES:]
+            job["last_output_at"] = time.time()
+    stream.close()
 
 
 def cleanup_finished_jobs() -> None:
     for job_id, job in JOBS.items():
         proc: subprocess.Popen = job.get("process")
-        if job.get("status") == "running" and proc.poll() is not None:
-            stdout, stderr = proc.communicate()
+        if job.get("status") == "running" and proc and proc.poll() is not None:
             job["finished_at"] = time.time()
             job["returncode"] = proc.returncode
-            job["stdout"] = stdout
-            job["stderr"] = stderr
             job["success"] = proc.returncode == 0
             job["status"] = "completed" if proc.returncode == 0 else "failed"
             job.pop("process", None)
@@ -94,8 +128,8 @@ def running_job_for(action: str, playlist_key: str) -> Optional[dict]:
 def public_job(job: dict, include_output: bool = False) -> dict:
     data = {k: v for k, v in job.items() if k != "process"}
     if not include_output:
-        data.pop("stdout", None)
-        data.pop("stderr", None)
+        data.pop("log_tail", None)
+        data.pop("stderr_tail", None)
     if data.get("started_at") and data.get("finished_at"):
         data["elapsed_seconds"] = round(data["finished_at"] - data["started_at"], 2)
     elif data.get("started_at"):
@@ -122,6 +156,7 @@ def start_job(action: str, playlist_key: str, request: BuildRequest) -> dict:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        bufsize=1,
     )
 
     JOBS[job_id] = {
@@ -131,13 +166,22 @@ def start_job(action: str, playlist_key: str, request: BuildRequest) -> dict:
         "status": "running",
         "success": None,
         "dry_run": request.dry_run,
+        "search_limit": request.search_limit,
         "command": " ".join(command),
         "pid": proc.pid,
         "started_at": time.time(),
         "finished_at": None,
         "returncode": None,
+        "progress": None,
+        "current_track": None,
+        "last_output_at": None,
+        "log_tail": [],
+        "stderr_tail": [],
         "process": proc,
     }
+
+    threading.Thread(target=read_stream, args=(job_id, proc.stdout, "stdout"), daemon=True).start()
+    threading.Thread(target=read_stream, args=(job_id, proc.stderr, "stderr"), daemon=True).start()
 
     return {
         "success": True,
