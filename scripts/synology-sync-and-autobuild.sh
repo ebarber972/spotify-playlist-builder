@@ -6,7 +6,7 @@ BRANCH="${BRANCH:-main}"
 API_URL="${API_URL:-http://127.0.0.1:5150}"
 DRY_RUN="${DRY_RUN:-false}"
 SEARCH_LIMIT="${SEARCH_LIMIT:-50}"
-SUDO="${SUDO:-sudo -n}"
+SUDO="${SUDO-sudo -n}"
 
 cd "$APP_DIR" || exit 1
 
