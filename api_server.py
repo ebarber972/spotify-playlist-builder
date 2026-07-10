@@ -12,7 +12,10 @@ from pydantic import BaseModel
 
 app = FastAPI(title="Spotify Playlist Builder API")
 
-PLAYLISTS = {
+APP_DIR = Path(__file__).parent
+PLAYLIST_DIR = APP_DIR / "playlists"
+DEFAULT_PLAYLIST_PREFIX = "The Sony Walkman Sessions"
+KNOWN_PLAYLISTS = {
     "hair-metal": {
         "csv": "playlists/hair_metal_master_database.csv",
         "name": "The Sony Walkman Sessions: Arena Rock & Hair Metal",
@@ -39,11 +42,54 @@ class BuildRequest(BaseModel):
     search_limit: int = 50
 
 
+def slugify(value: str) -> str:
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "-", value)
+    return value.strip("-")
+
+
+def humanize_playlist_name(stem: str) -> str:
+    words = re.split(r"[_\-]+", stem.strip())
+    pretty_words = []
+    for word in words:
+        lower = word.lower()
+        if lower in {"80s", "90s", "70s", "60s", "kroq", "roq", "rnb", "r&b"}:
+            pretty_words.append(word.upper().replace("RNB", "R&B"))
+        else:
+            pretty_words.append(word.capitalize())
+    return " ".join(pretty_words).strip()
+
+
+def playlist_catalog() -> dict[str, dict]:
+    catalog = dict(KNOWN_PLAYLISTS)
+    known_csvs = {item["csv"] for item in KNOWN_PLAYLISTS.values()}
+
+    if not PLAYLIST_DIR.exists():
+        return catalog
+
+    for csv_path in sorted(PLAYLIST_DIR.glob("*.csv")):
+        rel_path = csv_path.relative_to(APP_DIR).as_posix()
+        if rel_path in known_csvs:
+            continue
+
+        key = slugify(csv_path.stem)
+        if not key:
+            continue
+
+        catalog[key] = {
+            "csv": rel_path,
+            "name": f"{DEFAULT_PLAYLIST_PREFIX}: {humanize_playlist_name(csv_path.stem)}",
+        }
+
+    return catalog
+
+
 def make_command(action: str, playlist_key: str, request: BuildRequest) -> list[str]:
-    if playlist_key not in PLAYLISTS:
+    playlists = playlist_catalog()
+    if playlist_key not in playlists:
         raise HTTPException(status_code=404, detail=f"Unknown playlist: {playlist_key}")
 
-    playlist = PLAYLISTS[playlist_key]
+    playlist = playlists[playlist_key]
     name = request.name or playlist["name"]
 
     if action == "build":
@@ -200,6 +246,11 @@ def start_job(action: str, playlist_key: str, request: BuildRequest) -> dict:
 def health() -> dict:
     cleanup_finished_jobs()
     return {"status": "ok", "jobs": len(JOBS)}
+
+
+@app.get("/playlists")
+def list_playlists() -> dict:
+    return {"playlists": playlist_catalog()}
 
 
 @app.get("/jobs")
