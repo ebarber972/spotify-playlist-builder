@@ -2,7 +2,12 @@ services:
   spotify-playlist-builder:
     build: .
     container_name: spotify-playlist-builder
+    ports:
+      - "5150:5150"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
     working_dir: /app
-    stdin_open: true
-    tty: true
-    command: sleep infinity
+    command: uvicorn api_server:app --host 0.0.0.0 --port 5150
+    restart: unless-stopped
