@@ -106,6 +106,19 @@ start_sync() {
   echo
 }
 
+start_new_playlist() {
+  csv_file="$1"
+  key="$(slugify "$csv_file")"
+  playlist_id="$(playlist_id_for_key "$key")"
+
+  if [ -n "$playlist_id" ]; then
+    echo "New playlist CSV $csv_file already has target $playlist_id. Syncing instead of creating a duplicate playlist."
+    start_sync "$csv_file"
+  else
+    start_build "$csv_file"
+  fi
+}
+
 echo "Checking GitHub for Spotify playlist builder updates..."
 
 BEFORE="$(git_run rev-parse HEAD)"
@@ -146,7 +159,7 @@ if [ -n "$NEW_PLAYLISTS" ]; then
 
   echo "$NEW_PLAYLISTS" | while IFS= read -r csv_file; do
     [ -n "$csv_file" ] || continue
-    start_build "$csv_file"
+    start_new_playlist "$csv_file"
   done
 fi
 
