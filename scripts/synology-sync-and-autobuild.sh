@@ -6,11 +6,12 @@ BRANCH="${BRANCH:-main}"
 API_URL="${API_URL:-http://127.0.0.1:5150}"
 DRY_RUN="${DRY_RUN:-false}"
 SEARCH_LIMIT="${SEARCH_LIMIT:-50}"
+SUDO="${SUDO:-sudo -n}"
 
 cd "$APP_DIR" || exit 1
 
 git_run() {
-  sudo docker run --rm \
+  $SUDO docker run --rm \
     -v "$APP_DIR:/repo" \
     -w /repo \
     alpine/git "$@"
@@ -50,13 +51,13 @@ echo "Updated from $BEFORE to $AFTER"
 
 NEW_PLAYLISTS="$(git_run diff --name-status "$BEFORE" "$AFTER" -- playlists | awk '$1 == "A" && $2 ~ /\.csv$/ {print $2}')"
 
-if sudo docker compose version >/dev/null 2>&1; then
-  sudo docker compose up -d --build
+if $SUDO docker compose version >/dev/null 2>&1; then
+  $SUDO docker compose up -d --build
 elif command -v docker-compose >/dev/null 2>&1; then
-  sudo docker-compose up -d --build
+  $SUDO docker-compose up -d --build
 else
   echo "Docker Compose not found. Restarting container only..."
-  sudo docker restart spotify-playlist-builder
+  $SUDO docker restart spotify-playlist-builder
 fi
 
 wait_for_api
