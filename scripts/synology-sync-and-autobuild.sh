@@ -33,6 +33,29 @@ wait_for_api() {
   done
 }
 
+needs_container_rebuild() {
+  for changed_file in $1; do
+    case "$changed_file" in
+      Dockerfile|docker-compose.yml|requirements.txt|api_server.py|playlist_builder.py|scripts/*)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+rebuild_container() {
+  if $SUDO docker compose version >/dev/null 2>&1; then
+    $SUDO docker compose up -d --build
+  elif command -v docker-compose >/dev/null 2>&1; then
+    $SUDO docker-compose up -d --build
+  else
+    echo "Docker Compose not found. Restarting container only..."
+    $SUDO docker restart spotify-playlist-builder
+  fi
+}
+
 echo "Checking GitHub for Spotify playlist builder updates..."
 
 BEFORE="$(git_run rev-parse HEAD)"
@@ -49,15 +72,14 @@ fi
 
 echo "Updated from $BEFORE to $AFTER"
 
+CHANGED_FILES="$(git_run diff --name-only "$BEFORE" "$AFTER")"
 NEW_PLAYLISTS="$(git_run diff --name-status "$BEFORE" "$AFTER" -- playlists | awk '$1 == "A" && $2 ~ /\.csv$/ {print $2}')"
 
-if $SUDO docker compose version >/dev/null 2>&1; then
-  $SUDO docker compose up -d --build
-elif command -v docker-compose >/dev/null 2>&1; then
-  $SUDO docker-compose up -d --build
+if needs_container_rebuild "$CHANGED_FILES"; then
+  echo "Code/config changes detected. Rebuilding Docker container..."
+  rebuild_container
 else
-  echo "Docker Compose not found. Restarting container only..."
-  $SUDO docker restart spotify-playlist-builder
+  echo "Only playlist/content changes detected. Skipping Docker rebuild so running jobs are not interrupted."
 fi
 
 wait_for_api
