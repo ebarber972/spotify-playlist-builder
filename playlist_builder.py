@@ -104,6 +104,8 @@ def build(args):
     if args.playlist_id:
         playlist_id = args.playlist_id
         console.print(f"[green]Adding to existing playlist:[/green] {playlist_id}")
+        client.rename_playlist(playlist_id, args.name)
+        console.print(f"[green]Renamed playlist:[/green] {args.name}")
     else:
         public = parse_bool(args.public) if args.public is not None else config.default_public
         playlist_id = client.create_playlist(
@@ -140,6 +142,10 @@ def sync(args):
         console.print(f"Reports written to: {args.report_dir}")
         return
 
+    if args.name:
+        client.rename_playlist(args.playlist_id, args.name)
+        console.print(f"[green]Renamed playlist:[/green] {args.name}")
+
     client.add_tracks(args.playlist_id, uris)
     console.print(f"[green]Added {len(uris)} missing tracks to existing playlist.[/green]")
     console.print(f"[green]Playlist ID:[/green] {args.playlist_id}")
@@ -170,6 +176,7 @@ def main():
 
     sync_parser = sub.add_parser("sync", help="Add missing CSV tracks to an existing Spotify playlist.")
     add_common_args(sync_parser)
+    sync_parser.add_argument("--name", default="", help="Rename the existing Spotify playlist before syncing.")
 
     args = parser.parse_args()
 
