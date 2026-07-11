@@ -1,6 +1,12 @@
+import random
 import re
+import time
+
 import spotipy
+from requests.exceptions import RetryError
+from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyOAuth
+
 from config import SpotifyConfig
 from models import SpotifyTrack
 
@@ -31,15 +37,19 @@ class SpotifyClient:
                 scope=SCOPES,
                 open_browser=False,
                 cache_path=".spotify_token_cache",
-            )
+            ),
+            requests_timeout=30,
+            retries=3,
+            status_retries=3,
+            backoff_factor=1,
         )
         self.user_id = self.sp.current_user()["id"]
+        self._last_search_at = 0.0
 
     def artist_variants(self, artist: str) -> list[str]:
         variants = [artist]
         variants.extend(ARTIST_ALIASES.get(artist, []))
 
-        # Punctuation-light fallback for metal bands that Spotify sometimes indexes differently.
         plain = re.sub(r"[^A-Za-z0-9 ]+", " ", artist or "")
         plain = re.sub(r"\s+", " ", plain).strip()
         if plain and plain not in variants:
@@ -68,19 +78,58 @@ class SpotifyClient:
         queries.append(title_q)
         return list(dict.fromkeys(q for q in queries if q.strip()))
 
+    def _pace_search(self) -> None:
+        # Large playlist syncs can otherwise burst hundreds of searches in seconds.
+        minimum_interval = 0.75
+        elapsed = time.monotonic() - self._last_search_at
+        if elapsed < minimum_interval:
+            time.sleep(minimum_interval - elapsed)
+
+    def _search_with_backoff(self, query: str, limit: int) -> dict:
+        max_attempts = 12
+        for attempt in range(1, max_attempts + 1):
+            self._pace_search()
+            try:
+                result = self.sp.search(q=query, type="track", limit=limit)
+                self._last_search_at = time.monotonic()
+                return result
+            except SpotifyException as exc:
+                if exc.http_status != 429 or attempt == max_attempts:
+                    raise
+                retry_after = 0
+                headers = getattr(exc, "headers", None) or {}
+                try:
+                    retry_after = int(headers.get("Retry-After", 0))
+                except (TypeError, ValueError):
+                    retry_after = 0
+                delay = max(retry_after, min(120, 5 * (2 ** (attempt - 1))))
+            except RetryError:
+                if attempt == max_attempts:
+                    raise
+                delay = min(120, 5 * (2 ** (attempt - 1)))
+
+            delay += random.uniform(0.25, 1.25)
+            print(
+                f"Spotify rate limit while searching; waiting {delay:.1f}s "
+                f"before retry {attempt + 1}/{max_attempts}",
+                flush=True,
+            )
+            time.sleep(delay)
+
+        raise RuntimeError("Spotify search retry loop exited unexpectedly")
+
     def search_tracks(self, title: str, artist: str, album: str = "", limit: int = 20) -> list[SpotifyTrack]:
-        """
-        Search Spotify using multiple increasingly broad query tiers.
-        Returns a merged candidate pool, not just the first successful search page.
-        """
+        """Search Spotify using increasingly broad query tiers."""
         queries = self.build_queries(title, artist, album)
         seen = set()
         all_tracks = []
-        per_query_limit = max(10, min(limit, 50))
-        target_pool_size = max(limit, 50)
+
+        # Ten candidates is normally plenty for the matcher and cuts API load sharply.
+        per_query_limit = max(5, min(limit, 10))
+        target_pool_size = max(per_query_limit, min(limit, 20))
 
         for q in queries:
-            results = self.sp.search(q=q, type="track", limit=per_query_limit)
+            results = self._search_with_backoff(q, per_query_limit)
             tracks = results.get("tracks", {}).get("items", [])
             for item in tracks:
                 uri = item.get("uri")
@@ -88,7 +137,6 @@ class SpotifyClient:
                     seen.add(uri)
                     all_tracks.append(self._to_track(item))
 
-            # Keep searching past the first page when the pool is small. This matters for deep cuts.
             if len(all_tracks) >= target_pool_size:
                 break
 
