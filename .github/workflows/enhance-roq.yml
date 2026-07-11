@@ -1,0 +1,33 @@
+name: Enhance ROQ Playlist
+
+on:
+  push:
+    paths:
+      - playlists/roq_of_the_80s_additions.csv
+      - scripts/enhance_roq.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  enhance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Merge additions and clean playlist
+        run: python scripts/enhance_roq.py
+      - name: Commit enhanced playlist
+        run: |
+          if git diff --quiet -- playlists/roq_of_the_80s.csv; then
+            echo "No playlist changes needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add playlists/roq_of_the_80s.csv
+          git commit -m "feat: expand and clean ROQ of the 80s playlist"
+          git push
