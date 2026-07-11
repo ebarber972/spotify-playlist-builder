@@ -25,6 +25,14 @@ for row in rows:
     artist = (row.get("Artist") or "").strip()
     album = (row.get("Album") or "").strip()
     year = (row.get("Year") or "").strip()
+
+    # Repair rows where an unquoted comma in an artist name shifted columns.
+    extras = row.get(None) or []
+    if extras:
+        artist = f"{artist},{album}"
+        album = year
+        year = str(extras[0]).strip()
+
     if not title or not artist:
         continue
     try:
