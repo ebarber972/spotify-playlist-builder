@@ -22,6 +22,10 @@ slugify() {
   basename "$1" .csv | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
 }
 
+trim() {
+  sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
 playlist_id_for_key() {
   key="$1"
 
@@ -40,6 +44,32 @@ playlist_id_for_key() {
   ' "$TARGETS_FILE"
 }
 
+playlist_name_for_key() {
+  key="$1"
+
+  if [ ! -f "$TARGETS_FILE" ]; then
+    return 0
+  fi
+
+  awk -F, -v key="$key" '
+    NR == 1 { next }
+    /^[[:space:]]*#/ { next }
+    $1 == key {
+      name = $3
+      for (i = 4; i <= NF; i++) {
+        name = name "," $i
+      }
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+      print name
+      exit
+    }
+  ' "$TARGETS_FILE"
+}
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
 wait_for_api() {
   count=0
   until curl -fsS "$API_URL/health" >/dev/null 2>&1; do
@@ -55,7 +85,7 @@ wait_for_api() {
 needs_container_rebuild() {
   for changed_file in $1; do
     case "$changed_file" in
-      Dockerfile|docker-compose.yml|requirements.txt|api_server.py|playlist_builder.py|scripts/*)
+      Dockerfile|docker-compose.yml|requirements.txt|api_server.py|playlist_builder.py|spotify_client.py|scripts/*)
         return 0
         ;;
     esac
@@ -75,15 +105,40 @@ rebuild_container() {
   fi
 }
 
+build_payload() {
+  key="$1"
+  playlist_id="${2:-}"
+  playlist_name="$(playlist_name_for_key "$key")"
+
+  payload="{\"dry_run\":$DRY_RUN,\"search_limit\":$SEARCH_LIMIT"
+
+  if [ -n "$playlist_id" ]; then
+    payload="$payload,\"playlist_id\":\"$(json_escape "$playlist_id")\""
+  fi
+
+  if [ -n "$playlist_name" ]; then
+    payload="$payload,\"name\":\"$(json_escape "$playlist_name")\""
+  fi
+
+  payload="$payload}"
+  printf '%s' "$payload"
+}
+
 start_build() {
   csv_file="$1"
   key="$(slugify "$csv_file")"
+  playlist_name="$(playlist_name_for_key "$key")"
 
-  echo "Starting build for $csv_file as playlist key: $key"
+  if [ -n "$playlist_name" ]; then
+    echo "Starting build for $csv_file as playlist key: $key with name: $playlist_name"
+  else
+    echo "Starting build for $csv_file as playlist key: $key"
+  fi
+
   curl -fsS \
     -X POST "$API_URL/build/$key" \
     -H "Content-Type: application/json" \
-    -d "{\"dry_run\":$DRY_RUN,\"search_limit\":$SEARCH_LIMIT}"
+    -d "$(build_payload "$key")"
   echo
 }
 
@@ -91,18 +146,24 @@ start_sync() {
   csv_file="$1"
   key="$(slugify "$csv_file")"
   playlist_id="$(playlist_id_for_key "$key")"
+  playlist_name="$(playlist_name_for_key "$key")"
 
   if [ -z "$playlist_id" ]; then
     echo "Skipping sync for $csv_file as playlist key $key: no playlist_id found in $TARGETS_FILE"
-    echo "Add a line like: $key,SPOTIFY_PLAYLIST_ID"
+    echo "Add a line like: $key,SPOTIFY_PLAYLIST_ID,Playlist Display Name"
     return 0
   fi
 
-  echo "Starting sync for $csv_file as playlist key: $key to playlist ID: $playlist_id"
+  if [ -n "$playlist_name" ]; then
+    echo "Starting sync for $csv_file as playlist key: $key to playlist ID: $playlist_id with name: $playlist_name"
+  else
+    echo "Starting sync for $csv_file as playlist key: $key to playlist ID: $playlist_id"
+  fi
+
   curl -fsS \
     -X POST "$API_URL/sync/$key" \
     -H "Content-Type: application/json" \
-    -d "{\"dry_run\":$DRY_RUN,\"search_limit\":$SEARCH_LIMIT,\"playlist_id\":\"$playlist_id\"}"
+    -d "$(build_payload "$key" "$playlist_id")"
   echo
 }
 
