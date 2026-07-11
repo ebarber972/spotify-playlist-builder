@@ -239,6 +239,7 @@ CHANGED_FILES="$(git_run diff --name-only "$BEFORE" "$AFTER")"
 NEW_PLAYLISTS="$(git_run diff --name-status "$BEFORE" "$AFTER" -- playlists | awk '$1 == "A" && $2 ~ /^playlists\/.*\.csv$/ {print $2}')"
 UPDATED_PLAYLISTS="$(git_run diff --name-status "$BEFORE" "$AFTER" -- playlists | awk '$1 == "M" && $2 ~ /^playlists\/.*\.csv$/ {print $2}')"
 TARGETS_CHANGED="$(git_run diff --name-only "$BEFORE" "$AFTER" -- "$TARGETS_FILE" | grep -F "$TARGETS_FILE" || true)"
+TARGET_SYNC_CONTROL_CHANGED="$(printf '%s\n' "$CHANGED_FILES" | grep -E '^(config/playlist_targets\.csv|scripts/synology-sync-and-autobuild\.sh)$' || true)"
 
 if needs_container_rebuild "$CHANGED_FILES"; then
   echo "Code/config changes detected. Rebuilding Docker container..."
@@ -250,7 +251,7 @@ fi
 wait_for_api
 
 if [ -z "$NEW_PLAYLISTS" ] && [ -z "$UPDATED_PLAYLISTS" ]; then
-  if [ -n "$TARGETS_CHANGED" ]; then
+  if [ -n "$TARGETS_CHANGED" ] || [ -n "$TARGET_SYNC_CONTROL_CHANGED" ]; then
     sync_configured_targets
     echo "Synology sync and autobuild complete."
     exit 0
