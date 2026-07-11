@@ -29,7 +29,7 @@ class SpotifyClient:
                 client_secret=config.client_secret,
                 redirect_uri=config.redirect_uri,
                 scope=SCOPES,
-                open_browser=True,
+                open_browser=False,
                 cache_path=".spotify_token_cache",
             )
         )
@@ -122,6 +122,10 @@ class SpotifyClient:
             description=description,
         )
         return playlist["id"]
+
+    def rename_playlist(self, playlist_id: str, name: str) -> None:
+        if name:
+            self.sp.playlist_change_details(playlist_id=playlist_id, name=name)
 
     def add_tracks(self, playlist_id: str, uris: list[str], batch_size: int = 100) -> None:
         for i in range(0, len(uris), batch_size):
