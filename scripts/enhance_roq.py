@@ -26,7 +26,6 @@ for row in rows:
     album = (row.get("Album") or "").strip()
     year = (row.get("Year") or "").strip()
 
-    # Repair rows where an unquoted comma in an artist name shifted columns.
     extras = row.get(None) or []
     if extras:
         artist = f"{artist},{album}"
@@ -38,9 +37,10 @@ for row in rows:
     try:
         numeric_year = int(year)
     except ValueError:
-        numeric_year = 0
-    if numeric_year and numeric_year > 1989:
         continue
+    if numeric_year > 1989:
+        continue
+
     key = (norm(title), norm(artist))
     if key in seen:
         continue
