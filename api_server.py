@@ -1,3 +1,4 @@
+import csv
 import re
 import subprocess
 import sys
@@ -14,6 +15,7 @@ app = FastAPI(title="Spotify Playlist Builder API")
 
 APP_DIR = Path(__file__).parent
 PLAYLIST_DIR = APP_DIR / "playlists"
+TARGETS_FILE = APP_DIR / "config" / "playlist_targets.csv"
 DEFAULT_PLAYLIST_PREFIX = "The Sony Walkman Sessions"
 KNOWN_PLAYLISTS = {
     "hair-metal": {
@@ -53,33 +55,61 @@ def humanize_playlist_name(stem: str) -> str:
     pretty_words = []
     for word in words:
         lower = word.lower()
-        if lower in {"80s", "90s", "70s", "60s", "kroq", "roq", "rnb", "r&b"}:
-            pretty_words.append(word.upper().replace("RNB", "R&B"))
+        if lower in {"80s", "90s", "70s", "60s"}:
+            pretty_words.append(lower)
+        elif lower in {"kroq", "roq"}:
+            pretty_words.append(lower.upper())
+        elif lower in {"rnb", "r&b"}:
+            pretty_words.append("R&B")
         else:
             pretty_words.append(word.capitalize())
     return " ".join(pretty_words).strip()
+
+
+def playlist_targets() -> dict[str, dict]:
+    targets: dict[str, dict] = {}
+    if not TARGETS_FILE.exists():
+        return targets
+
+    with TARGETS_FILE.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            key = (row.get("playlist_key") or "").strip()
+            if not key or key.startswith("#"):
+                continue
+            targets[key] = {
+                "playlist_id": (row.get("playlist_id") or "").strip(),
+                "name": (row.get("playlist_name") or row.get("name") or "").strip(),
+            }
+    return targets
 
 
 def playlist_catalog() -> dict[str, dict]:
     catalog = dict(KNOWN_PLAYLISTS)
     known_csvs = {item["csv"] for item in KNOWN_PLAYLISTS.values()}
 
-    if not PLAYLIST_DIR.exists():
-        return catalog
+    if PLAYLIST_DIR.exists():
+        for csv_path in sorted(PLAYLIST_DIR.glob("*.csv")):
+            rel_path = csv_path.relative_to(APP_DIR).as_posix()
+            if rel_path in known_csvs:
+                continue
 
-    for csv_path in sorted(PLAYLIST_DIR.glob("*.csv")):
-        rel_path = csv_path.relative_to(APP_DIR).as_posix()
-        if rel_path in known_csvs:
+            key = slugify(csv_path.stem)
+            if not key:
+                continue
+
+            catalog[key] = {
+                "csv": rel_path,
+                "name": f"{DEFAULT_PLAYLIST_PREFIX}: {humanize_playlist_name(csv_path.stem)}",
+            }
+
+    for key, target in playlist_targets().items():
+        if key not in catalog:
             continue
-
-        key = slugify(csv_path.stem)
-        if not key:
-            continue
-
-        catalog[key] = {
-            "csv": rel_path,
-            "name": f"{DEFAULT_PLAYLIST_PREFIX}: {humanize_playlist_name(csv_path.stem)}",
-        }
+        if target.get("playlist_id"):
+            catalog[key]["playlist_id"] = target["playlist_id"]
+        if target.get("name"):
+            catalog[key]["name"] = target["name"]
 
     return catalog
 
@@ -114,6 +144,8 @@ def make_command(action: str, playlist_key: str, request: BuildRequest) -> list[
             "--search-limit",
             str(request.search_limit),
         ]
+        if name:
+            args.extend(["--name", name])
     else:
         raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
 
@@ -217,6 +249,7 @@ def start_job(action: str, playlist_key: str, request: BuildRequest) -> dict:
         "success": None,
         "dry_run": request.dry_run,
         "search_limit": request.search_limit,
+        "name": request.name,
         "command": " ".join(command),
         "pid": proc.pid,
         "started_at": time.time(),
