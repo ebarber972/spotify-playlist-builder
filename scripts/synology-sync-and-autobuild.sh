@@ -66,6 +66,15 @@ playlist_name_for_key() {
   ' "$TARGETS_FILE"
 }
 
+target_csv_for_key() {
+  key="$1"
+  candidate="playlists/$(printf '%s' "$key" | tr '-' '_').csv"
+
+  if [ -f "$candidate" ]; then
+    printf '%s\n' "$candidate"
+  fi
+}
+
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
@@ -180,6 +189,36 @@ start_new_playlist() {
   fi
 }
 
+sync_configured_targets() {
+  if [ ! -f "$TARGETS_FILE" ]; then
+    return 0
+  fi
+
+  echo "Playlist target config changed. Syncing configured targets so Spotify names/IDs are applied."
+
+  awk -F, '
+    NR == 1 { next }
+    /^[[:space:]]*#/ { next }
+    {
+      key = $1
+      id = $2
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", id)
+      if (key != "" && id != "") {
+        print key
+      }
+    }
+  ' "$TARGETS_FILE" | while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    csv_file="$(target_csv_for_key "$key")"
+    if [ -n "$csv_file" ]; then
+      start_sync "$csv_file"
+    else
+      echo "Skipping target $key: expected CSV file not found."
+    fi
+  done
+}
+
 echo "Checking GitHub for Spotify playlist builder updates..."
 
 BEFORE="$(git_run rev-parse HEAD)"
@@ -199,6 +238,7 @@ echo "Updated from $BEFORE to $AFTER"
 CHANGED_FILES="$(git_run diff --name-only "$BEFORE" "$AFTER")"
 NEW_PLAYLISTS="$(git_run diff --name-status "$BEFORE" "$AFTER" -- playlists | awk '$1 == "A" && $2 ~ /^playlists\/.*\.csv$/ {print $2}')"
 UPDATED_PLAYLISTS="$(git_run diff --name-status "$BEFORE" "$AFTER" -- playlists | awk '$1 == "M" && $2 ~ /^playlists\/.*\.csv$/ {print $2}')"
+TARGETS_CHANGED="$(git_run diff --name-only "$BEFORE" "$AFTER" -- "$TARGETS_FILE" | grep -F "$TARGETS_FILE" || true)"
 
 if needs_container_rebuild "$CHANGED_FILES"; then
   echo "Code/config changes detected. Rebuilding Docker container..."
@@ -210,6 +250,12 @@ fi
 wait_for_api
 
 if [ -z "$NEW_PLAYLISTS" ] && [ -z "$UPDATED_PLAYLISTS" ]; then
+  if [ -n "$TARGETS_CHANGED" ]; then
+    sync_configured_targets
+    echo "Synology sync and autobuild complete."
+    exit 0
+  fi
+
   echo "GitHub changed, but no playlist CSVs were added or modified."
   exit 0
 fi
