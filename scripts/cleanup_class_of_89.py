@@ -81,3 +81,4 @@ with report.open("w", newline="", encoding="utf-8") as handle:
 
 print(f"Kept {len(cleaned)} tracks; removed {len(removed)} rows")
 print(f"Wrote cleanup report to {report}")
+# Triggered after workflow creation.
