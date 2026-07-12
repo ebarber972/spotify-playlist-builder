@@ -91,10 +91,13 @@ wait_for_api() {
   done
 }
 
+# CHANGED: scripts/* removed. This host-side script and anything else under
+# scripts/ doesn't run inside the container, so editing it shouldn't force a
+# rebuild. Only files that are actually baked into the image belong here.
 needs_container_rebuild() {
   for changed_file in $1; do
     case "$changed_file" in
-      Dockerfile|docker-compose.yml|requirements.txt|api_server.py|playlist_builder.py|spotify_client.py|scripts/*)
+      Dockerfile|docker-compose.yml|requirements.txt|api_server.py|playlist_builder.py|spotify_client.py)
         return 0
         ;;
     esac
@@ -189,12 +192,16 @@ start_new_playlist() {
   fi
 }
 
+# CHANGED: full resync of every configured target. Still used, but now only
+# as a deliberate fallback when the sync script itself changes (we want to
+# re-verify everything in that case). No longer used for ordinary
+# playlist_targets.csv edits.
 sync_configured_targets() {
   if [ ! -f "$TARGETS_FILE" ]; then
     return 0
   fi
 
-  echo "Playlist target config changed. Syncing configured targets so Spotify names/IDs are applied."
+  echo "Sync script changed. Re-syncing ALL configured targets to be safe."
 
   awk -F, '
     NR == 1 { next }
@@ -209,6 +216,41 @@ sync_configured_targets() {
       }
     }
   ' "$TARGETS_FILE" | while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    csv_file="$(target_csv_for_key "$key")"
+    if [ -n "$csv_file" ]; then
+      start_sync "$csv_file"
+    else
+      echo "Skipping target $key: expected CSV file not found."
+    fi
+  done
+}
+
+# NEW: only sync the specific keys whose row was added or changed in
+# playlist_targets.csv, instead of every configured playlist. Looks at the
+# '+' lines of the diff (added rows, and the "new" side of any modified row)
+# and pulls out just the key column.
+sync_changed_targets_only() {
+  echo "Playlist target config changed. Syncing only the affected targets."
+
+  changed_keys="$(
+    git_run diff "$BEFORE" "$AFTER" -- "$TARGETS_FILE" \
+      | grep -E '^\+[^+]' \
+      | sed -E 's/^\+//' \
+      | awk -F, '{
+          key = $1
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+          if (key != "" && key !~ /^#/) print key
+        }'
+  )"
+
+  if [ -z "$changed_keys" ]; then
+    echo "Could not determine which target rows changed. Falling back to full resync."
+    sync_configured_targets
+    return 0
+  fi
+
+  printf '%s\n' "$changed_keys" | while IFS= read -r key; do
     [ -n "$key" ] || continue
     csv_file="$(target_csv_for_key "$key")"
     if [ -n "$csv_file" ]; then
@@ -239,7 +281,7 @@ CHANGED_FILES="$(git_run diff --name-only "$BEFORE" "$AFTER")"
 NEW_PLAYLISTS="$(git_run diff --name-status "$BEFORE" "$AFTER" -- playlists | awk '$1 == "A" && $2 ~ /^playlists\/.*\.csv$/ {print $2}')"
 UPDATED_PLAYLISTS="$(git_run diff --name-status "$BEFORE" "$AFTER" -- playlists | awk '$1 == "M" && $2 ~ /^playlists\/.*\.csv$/ {print $2}')"
 TARGETS_CHANGED="$(git_run diff --name-only "$BEFORE" "$AFTER" -- "$TARGETS_FILE" | grep -F "$TARGETS_FILE" || true)"
-TARGET_SYNC_CONTROL_CHANGED="$(printf '%s\n' "$CHANGED_FILES" | grep -E '^(config/playlist_targets\.csv|scripts/synology-sync-and-autobuild\.sh)$' || true)"
+TARGET_SYNC_CONTROL_CHANGED="$(printf '%s\n' "$CHANGED_FILES" | grep -E '^scripts/synology-sync-and-autobuild\.sh$' || true)"
 
 if needs_container_rebuild "$CHANGED_FILES"; then
   echo "Code/config changes detected. Rebuilding Docker container..."
@@ -251,8 +293,14 @@ fi
 wait_for_api
 
 if [ -z "$NEW_PLAYLISTS" ] && [ -z "$UPDATED_PLAYLISTS" ]; then
-  if [ -n "$TARGETS_CHANGED" ] || [ -n "$TARGET_SYNC_CONTROL_CHANGED" ]; then
+  if [ -n "$TARGET_SYNC_CONTROL_CHANGED" ]; then
     sync_configured_targets
+    echo "Synology sync and autobuild complete."
+    exit 0
+  fi
+
+  if [ -n "$TARGETS_CHANGED" ]; then
+    sync_changed_targets_only
     echo "Synology sync and autobuild complete."
     exit 0
   fi
