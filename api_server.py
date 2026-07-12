@@ -22,14 +22,6 @@ KNOWN_PLAYLISTS = {
         "csv": "playlists/hair_metal_master_database.csv",
         "name": "The Sony Walkman Sessions: Arena Rock & Hair Metal",
     },
-    "80s-rap": {
-        "csv": "playlists/80s_rap_hiphop_master_database.csv",
-        "name": "The Sony Walkman Sessions: Rap & Hip-Hop",
-    },
-    "starter": {
-        "csv": "playlists/hair_metal_starter.csv",
-        "name": "Docker Spotify Test",
-    },
 }
 
 JOBS: dict[str, dict] = {}
