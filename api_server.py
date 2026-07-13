@@ -9,9 +9,17 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 app = FastAPI(title="Spotify Playlist Builder API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 APP_DIR = Path(__file__).parent
 PLAYLIST_DIR = APP_DIR / "playlists"
@@ -23,7 +31,6 @@ KNOWN_PLAYLISTS = {
         "name": "The Sony Walkman Sessions: Arena Rock & Hair Metal",
     },
 }
-
 JOBS: dict[str, dict] = {}
 PROGRESS_RE = re.compile(r"^(\d+)/(\d+)\s+Searching:\s+(.+)$")
 MAX_LOG_LINES = 250
