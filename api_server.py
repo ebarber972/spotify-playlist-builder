@@ -120,6 +120,7 @@ def make_command(action: str, playlist_key: str, request: BuildRequest) -> list[
 
     playlist = playlists[playlist_key]
     name = request.name or playlist["name"]
+    playlist_id = request.playlist_id or playlist.get("playlist_id")
 
     if action == "build":
         args = [
@@ -130,16 +131,16 @@ def make_command(action: str, playlist_key: str, request: BuildRequest) -> list[
             "--search-limit",
             str(request.search_limit),
         ]
-        if request.playlist_id:
-            args.extend(["--playlist-id", request.playlist_id])
+        if playlist_id:
+            args.extend(["--playlist-id", playlist_id])
     elif action == "sync":
-        if not request.playlist_id:
-            raise HTTPException(status_code=400, detail="sync requires playlist_id")
+        if not playlist_id:
+            raise HTTPException(status_code=400, detail="sync requires playlist_id (none provided and none saved for this playlist)")
         args = [
             "sync",
             playlist["csv"],
             "--playlist-id",
-            request.playlist_id,
+            playlist_id,
             "--search-limit",
             str(request.search_limit),
         ]
