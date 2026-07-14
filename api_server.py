@@ -1,4 +1,5 @@
 import csv
+import queue
 import re
 import subprocess
 import sys
@@ -32,6 +33,8 @@ KNOWN_PLAYLISTS = {
     },
 }
 JOBS: dict[str, dict] = {}
+JOB_QUEUE: "queue.Queue[str]" = queue.Queue()
+QUEUE_COOLDOWN_SECONDS = 10
 PROGRESS_RE = re.compile(r"^(\d+)/(\d+)\s+Searching:\s+(.+)$")
 MAX_LOG_LINES = 250
 
@@ -188,27 +191,107 @@ def read_stream(job_id: str, stream, key: str) -> None:
     stream.close()
 
 
+def finish_job(job: dict, returncode: int) -> None:
+    if job.get("status") != "running":
+        return
+    job["finished_at"] = time.time()
+    job["returncode"] = returncode
+    job["success"] = returncode == 0
+    job["status"] = "completed" if returncode == 0 else "failed"
+    job.pop("process", None)
+
+
 def cleanup_finished_jobs() -> None:
-    for job_id, job in JOBS.items():
-        proc: subprocess.Popen = job.get("process")
-        if job.get("status") == "running" and proc and proc.poll() is not None:
-            job["finished_at"] = time.time()
-            job["returncode"] = proc.returncode
-            job["success"] = proc.returncode == 0
-            job["status"] = "completed" if proc.returncode == 0 else "failed"
-            job.pop("process", None)
+    for job in list(JOBS.values()):
+        proc: Optional[subprocess.Popen] = job.get("process")
+        if job.get("status") == "running" and proc:
+            returncode = proc.poll()
+            if returncode is not None:
+                finish_job(job, returncode)
+
+
+def _launch_subprocess(job_id: str) -> None:
+    job = JOBS.get(job_id)
+    if job is None:
+        return
+
+    command = job["command_list"]
+    proc = subprocess.Popen(
+        command,
+        cwd=APP_DIR,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+
+    job["status"] = "running"
+    job["pid"] = proc.pid
+    job["started_at"] = time.time()
+    job["process"] = proc
+
+    threading.Thread(target=read_stream, args=(job_id, proc.stdout, "stdout"), daemon=True).start()
+    threading.Thread(target=read_stream, args=(job_id, proc.stderr, "stderr"), daemon=True).start()
+
+
+def _queue_worker() -> None:
+    # Only one Spotify-hitting job runs at a time, regardless of caller.
+    # Everything else waits here until its turn, preventing concurrent bursts.
+    while True:
+        job_id = JOB_QUEUE.get()
+        try:
+            job = JOBS.get(job_id)
+            if job is None or job.get("status") != "queued":
+                continue
+
+            try:
+                _launch_subprocess(job_id)
+            except Exception as exc:
+                job["status"] = "failed"
+                job["success"] = False
+                job["finished_at"] = time.time()
+                job["returncode"] = None
+                job.setdefault("stderr_tail", []).append(f"Failed to start job: {exc}")
+                continue
+
+            while True:
+                job = JOBS.get(job_id)
+                if job is None or job.get("status") != "running":
+                    break
+
+                proc: Optional[subprocess.Popen] = job.get("process")
+                if proc is None:
+                    job["status"] = "failed"
+                    job["success"] = False
+                    job["finished_at"] = time.time()
+                    job.setdefault("stderr_tail", []).append("Running job lost its subprocess handle.")
+                    break
+
+                returncode = proc.poll()
+                if returncode is not None:
+                    finish_job(job, returncode)
+                    break
+
+                time.sleep(1)
+
+            time.sleep(QUEUE_COOLDOWN_SECONDS)
+        finally:
+            JOB_QUEUE.task_done()
+
+
+threading.Thread(target=_queue_worker, daemon=True).start()
 
 
 def running_job_for(action: str, playlist_key: str) -> Optional[dict]:
     cleanup_finished_jobs()
     for job_id, job in JOBS.items():
-        if job.get("status") == "running" and job.get("action") == action and job.get("playlist_key") == playlist_key:
+        if job.get("status") in ("running", "queued") and job.get("action") == action and job.get("playlist_key") == playlist_key:
             return {"job_id": job_id, **public_job(job)}
     return None
 
 
 def public_job(job: dict, include_output: bool = False) -> dict:
-    data = {k: v for k, v in job.items() if k != "process"}
+    data = {k: v for k, v in job.items() if k not in {"process", "command_list"}}
     if not include_output:
         data.pop("log_tail", None)
         data.pop("stderr_tail", None)
@@ -222,37 +305,31 @@ def public_job(job: dict, include_output: bool = False) -> dict:
 def start_job(action: str, playlist_key: str, request: BuildRequest) -> dict:
     existing = running_job_for(action, playlist_key)
     if existing:
+        existing_status = existing.get("status", "running")
         return {
             "success": False,
-            "status": "already_running",
-            "message": f"A {action} job for {playlist_key} is already running.",
+            "status": existing_status,
+            "message": f"A {action} job for {playlist_key} is already {existing_status}.",
             "existing_job": existing,
         }
 
     command = make_command(action, playlist_key, request)
     job_id = f"{playlist_key}-{action}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
 
-    proc = subprocess.Popen(
-        command,
-        cwd=Path(__file__).parent,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-
     JOBS[job_id] = {
         "job_id": job_id,
         "playlist_key": playlist_key,
         "action": action,
-        "status": "running",
+        "status": "queued",
         "success": None,
         "dry_run": request.dry_run,
         "search_limit": request.search_limit,
         "name": request.name,
         "command": " ".join(command),
-        "pid": proc.pid,
-        "started_at": time.time(),
+        "command_list": command,
+        "pid": None,
+        "started_at": None,
+        "queued_at": time.time(),
         "finished_at": None,
         "returncode": None,
         "progress": None,
@@ -260,17 +337,15 @@ def start_job(action: str, playlist_key: str, request: BuildRequest) -> dict:
         "last_output_at": None,
         "log_tail": [],
         "stderr_tail": [],
-        "process": proc,
     }
 
-    threading.Thread(target=read_stream, args=(job_id, proc.stdout, "stdout"), daemon=True).start()
-    threading.Thread(target=read_stream, args=(job_id, proc.stderr, "stderr"), daemon=True).start()
+    JOB_QUEUE.put(job_id)
 
     return {
         "success": True,
-        "status": "started",
+        "status": "queued",
         "job_id": job_id,
-        "pid": proc.pid,
+        "queue_position": JOB_QUEUE.qsize(),
         "command": " ".join(command),
     }
 
@@ -306,6 +381,13 @@ def kill_job(job_id: str) -> dict:
     if job_id not in JOBS:
         raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
     job = JOBS[job_id]
+
+    if job.get("status") == "queued":
+        job["status"] = "killed"
+        job["finished_at"] = time.time()
+        job["success"] = False
+        return {"success": True, "status": "killed", "job_id": job_id}
+
     proc = job.get("process")
     if not proc:
         return {"success": False, "status": job.get("status"), "message": "Job is not running."}
