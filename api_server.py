@@ -29,7 +29,7 @@ DEFAULT_PLAYLIST_PREFIX = "The Sony Walkman Sessions"
 KNOWN_PLAYLISTS = {
     "hair-metal": {
         "csv": "playlists/hair_metal_master_database.csv",
-        "name": "The Sony Walkman Sessions: Arena Rock & Hair Metal",
+        "name": "Arena Rock & Hair Metal | The Sony Walkman Session",
     },
 }
 JOBS: dict[str, dict] = {}
