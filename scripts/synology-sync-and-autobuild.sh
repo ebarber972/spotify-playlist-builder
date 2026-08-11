@@ -80,6 +80,23 @@ default_playlist_name_for_key() {
 
 target_csv_for_key() {
   key="$1"
+  configured_csv=""
+  if [ -f "$TARGETS_FILE" ]; then
+    configured_csv="$(awk -F, -v key="$key" '
+      NR == 1 { next }
+      /^[[:space:]]*#/ { next }
+      $1 == key {
+        value = $4
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+        print value
+        exit
+      }
+    ' "$TARGETS_FILE")"
+  fi
+  if [ -n "$configured_csv" ]; then
+    [ -f "$configured_csv" ] && printf '%s\n' "$configured_csv"
+    return
+  fi
   candidate="playlists/$(printf '%s' "$key" | tr '-' '_').csv"
   [ -f "$candidate" ] && printf '%s\n' "$candidate"
 }
@@ -181,7 +198,7 @@ save_playlist_target() {
 
   mkdir -p "$(dirname "$TARGETS_FILE")"
   if [ ! -f "$TARGETS_FILE" ]; then
-    printf 'playlist_key,playlist_id,playlist_name\n' > "$TARGETS_FILE"
+    printf 'playlist_key,playlist_id,playlist_name,csv_file\n' > "$TARGETS_FILE"
   fi
 
   printf '%s,%s,%s\n' "$key" "$playlist_id" "$playlist_name" >> "$TARGETS_FILE"
