@@ -172,11 +172,16 @@ config/playlist_targets.csv
 Format:
 
 ```csv
-playlist_key,playlist_id,playlist_name
-open-road-anthems,SPOTIFY_PLAYLIST_ID,Open Road Anthems
+playlist_key,playlist_id,playlist_name,csv_file
+open-road-anthems,SPOTIFY_PLAYLIST_ID,Open Road Anthems,
+hair-metal,SPOTIFY_PLAYLIST_ID,Arena Rock & Hair Metal,playlists/hair_metal_master_database.csv
 ```
 
 When a saved ID exists, both API build and sync requests automatically use it unless the caller explicitly supplies a different ID. This prevents the Build endpoint from creating a duplicate playlist for an existing target.
+
+The optional `csv_file` column explicitly maps a playlist key to a CSV whose
+filename does not naturally produce that key. Unknown keys are rejected; the
+API never falls back to a different playlist.
 
 ## API Endpoints
 
