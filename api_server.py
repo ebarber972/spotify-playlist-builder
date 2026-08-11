@@ -409,4 +409,15 @@ def build_playlist(playlist_key: str, request: BuildRequest) -> dict:
 
 @app.post("/sync/{playlist_key}")
 def sync_playlist(playlist_key: str, request: BuildRequest) -> dict:
+    playlist = playlist_catalog().get(playlist_key)
+    if playlist is None:
+        raise HTTPException(status_code=404, detail=f"Unknown playlist: {playlist_key}")
+
+    # Callers such as n8n may submit every playlist through the sync route.
+    # A playlist without a Spotify ID has never been built, so safely promote
+    # that first request to a build instead of rejecting it.
+    playlist_id = request.playlist_id or playlist.get("playlist_id")
+    if not playlist_id:
+        return start_job("build", playlist_key, request)
+
     return start_job("sync", playlist_key, request)
