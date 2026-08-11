@@ -1,6 +1,8 @@
 # Shareable Template Packaging Guide
 
-This project can be shared as a clean self-hosted Spotify playlist builder, but the shared copy must not include personal playlist CSVs, Spotify playlist IDs, token caches, reports, or private environment files.
+This project can be shared as a clean, platform-neutral, self-hosted Spotify playlist builder. The shared copy must not include personal playlist CSVs, Spotify playlist IDs, token caches, reports, or private environment files.
+
+The exported package does **not** assume the recipient has Portainer, Proxmox, Synology, a NAS, n8n, or any other specific hosting platform. The portable requirement is Docker Compose.
 
 Use `scripts/export-shareable-template.sh` to create a clean package under `dist/spotify-playlist-builder-template/`.
 
@@ -11,6 +13,7 @@ Use `scripts/export-shareable-template.sh` to create a clean package under `dist
 - `.env.example` for each user's own Spotify Developer app credentials.
 - A sample playlist CSV in `playlists/example_open_road.csv`.
 - A blank `config/playlist_targets.csv` with the required header.
+- A platform-neutral `README.md` and `QUICKSTART.md`.
 - Documentation explaining setup, CSV format, build, sync, and safety behavior.
 
 ## What the package excludes
@@ -21,6 +24,18 @@ Use `scripts/export-shareable-template.sh` to create a clean package under `dist
 - `reports/`, `cache/`, virtual environments, and Python caches.
 - Eric's personal playlist CSVs.
 - Eric's `config/playlist_targets.csv` playlist IDs.
+- Host-specific deployment assumptions such as Portainer, Proxmox, Synology/NAS paths, n8n workflows, or installation-specific wrappers.
+
+## Supported recipient environments
+
+The recipient only needs an environment that can run Docker Compose, for example:
+
+- Windows or macOS with Docker Desktop.
+- Linux with Docker Engine and the Docker Compose plugin.
+- A generic VM or server.
+- Any container host that supports Docker Compose.
+
+The package should not require them to know or use Eric's NAS path, Proxmox setup, Portainer history, n8n workflow, or Synology wrapper.
 
 ## Create the clean package
 
@@ -61,6 +76,12 @@ docker compose up -d --build
 curl http://127.0.0.1:5150/health
 ```
 
+On Windows PowerShell:
+
+```powershell
+copy .env.example .env
+```
+
 Then build the sample playlist:
 
 ```bash
@@ -74,6 +95,6 @@ After Spotify creates a playlist, save its ID in `config/playlist_targets.csv` i
 ## Safety notes
 
 - One installation is intended for one Spotify account.
-- Sync is additive: it can add missing tracks and rename a playlist, but it does not remove tracks or reorder Spotify playlists.
+- Sync is additive: it can add missing tracks and rename a playlist, but it does not remove or reorder Spotify playlists.
 - The API has no authentication yet. Keep port `5150` on a trusted network unless authentication and restricted CORS are added.
 - Do not share `.env`, `.spotify_token_cache`, logs with secrets, screenshots containing secrets, or real playlist IDs unless intended.
