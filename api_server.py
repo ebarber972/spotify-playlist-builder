@@ -26,12 +26,6 @@ APP_DIR = Path(__file__).parent
 PLAYLIST_DIR = APP_DIR / "playlists"
 TARGETS_FILE = APP_DIR / "config" / "playlist_targets.csv"
 DEFAULT_PLAYLIST_PREFIX = "The Sony Walkman Sessions"
-KNOWN_PLAYLISTS = {
-    "hair-metal": {
-        "csv": "playlists/hair_metal_master_database.csv",
-        "name": "Arena Rock & Hair Metal | The Sony Walkman Session",
-    },
-}
 JOBS: dict[str, dict] = {}
 JOB_QUEUE: "queue.Queue[str]" = queue.Queue()
 QUEUE_COOLDOWN_SECONDS = 10
@@ -82,20 +76,17 @@ def playlist_targets() -> dict[str, dict]:
             targets[key] = {
                 "playlist_id": (row.get("playlist_id") or "").strip(),
                 "name": (row.get("playlist_name") or row.get("name") or "").strip(),
+                "csv": (row.get("csv_file") or "").strip(),
             }
     return targets
 
 
 def playlist_catalog() -> dict[str, dict]:
-    catalog = dict(KNOWN_PLAYLISTS)
-    known_csvs = {item["csv"] for item in KNOWN_PLAYLISTS.values()}
+    catalog: dict[str, dict] = {}
 
     if PLAYLIST_DIR.exists():
         for csv_path in sorted(PLAYLIST_DIR.glob("*.csv")):
             rel_path = csv_path.relative_to(APP_DIR).as_posix()
-            if rel_path in known_csvs:
-                continue
-
             key = slugify(csv_path.stem)
             if not key:
                 continue
@@ -106,7 +97,18 @@ def playlist_catalog() -> dict[str, dict]:
             }
 
     for key, target in playlist_targets().items():
-        if key not in catalog:
+        configured_csv = target.get("csv")
+        if configured_csv:
+            csv_path = APP_DIR / configured_csv
+            if not csv_path.is_file() or csv_path.suffix.lower() != ".csv":
+                continue
+            catalog[key] = {
+                "csv": configured_csv,
+                "name": f"{DEFAULT_PLAYLIST_PREFIX}: {humanize_playlist_name(csv_path.stem)}",
+            }
+        elif key not in catalog:
+            # A target without a matching CSV is invalid. Never guess or fall back
+            # to another playlist.
             continue
         if target.get("playlist_id"):
             catalog[key]["playlist_id"] = target["playlist_id"]
