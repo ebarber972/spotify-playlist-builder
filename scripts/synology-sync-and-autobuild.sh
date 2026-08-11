@@ -351,15 +351,7 @@ fi
 wait_for_api
 
 if [ -z "$NEW_PLAYLISTS" ] && [ -z "$UPDATED_PLAYLISTS" ]; then
-  if [ -n "$SCRIPT_CHANGED" ]; then
-    echo "Sync script changed. Re-syncing configured targets."
-    sync_configured_targets
-  elif [ -n "$TARGETS_CHANGED" ]; then
-    echo "Playlist target config changed. Syncing affected targets."
-    sync_changed_targets_only
-  else
-    echo "GitHub changed, but no playlist CSVs were added or modified."
-  fi
+  echo "No playlist CSVs were added or modified. Nothing will be synced."
   exit 0
 fi
 
