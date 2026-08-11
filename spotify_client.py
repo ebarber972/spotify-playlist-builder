@@ -182,18 +182,21 @@ class SpotifyClient:
     def current_playlist_tracks(self, playlist_id: str) -> set[str]:
         seen = set()
         offset = 0
+        page_size = 50
         while True:
             page = self.sp.playlist_items(
                 playlist_id,
-                fields="items(track(uri,external_ids,is_local,name,artists(name),album(name,album_type,release_date),duration_ms,popularity,explicit,track_number,disc_number)),next",
-                limit=100,
+                fields="items(item(uri),track(uri)),next",
+                limit=page_size,
                 offset=offset,
             )
             for item in page.get("items", []):
-                track = item.get("track")
+                # Spotify renamed the nested playlist field from `track` to
+                # `item` in 2026. Keep the fallback for older API responses.
+                track = item.get("item") or item.get("track")
                 if track and track.get("uri"):
                     seen.add(track["uri"])
             if not page.get("next"):
                 break
-            offset += 100
+            offset += page_size
         return seen
