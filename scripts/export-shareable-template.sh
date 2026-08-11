@@ -23,7 +23,7 @@ copy_path() {
   fi
 }
 
-# Core application files
+# Core portable application files. Do not copy host-specific deployment wrappers.
 for path in \
   api_server.py \
   config.py \
@@ -35,16 +35,13 @@ for path in \
   reorder.py \
   requirements.txt \
   spotify_client.py \
-  README.md \
   .env.example \
   .gitignore
  do
   copy_path "$path"
 done
 
-# Helpful scripts and docs, excluding installation-specific wrappers if absent.
-mkdir -p "$OUT_DIR/scripts" "$OUT_DIR/docs" "$OUT_DIR/playlists" "$OUT_DIR/config"
-copy_path "scripts/synology-sync-and-autobuild.sh"
+mkdir -p "$OUT_DIR/docs" "$OUT_DIR/playlists" "$OUT_DIR/config"
 copy_path "docs/shareable-template.md"
 
 # Replace personal playlist data with safe samples.
@@ -62,10 +59,18 @@ playlist_key,playlist_id,playlist_name
 example-open-road,,Example Open Road Playlist
 CSV
 
-cat > "$OUT_DIR/QUICKSTART.md" <<'MD'
-# Spotify Playlist Builder Quickstart
+cat > "$OUT_DIR/README.md" <<'MD'
+# Spotify Playlist Builder Template
 
-This is a clean template copy. It does not include the original owner's Spotify credentials, token cache, personal playlists, or Spotify playlist IDs.
+This is a clean, platform-neutral Spotify Playlist Builder package. It does not assume Portainer, Proxmox, Synology, a NAS, n8n, or any specific hosting stack.
+
+It only assumes the recipient has Docker Compose available on one machine, such as:
+
+- Windows or macOS with Docker Desktop
+- Linux with Docker Engine and the Docker Compose plugin
+- any server/VM/container host that can run Docker Compose
+
+The package does not include the original owner's Spotify credentials, token cache, personal playlists, reports, or Spotify playlist IDs.
 
 ## 1. Create a Spotify Developer app
 
@@ -77,17 +82,45 @@ http://127.0.0.1:8888/callback
 
 ## 2. Configure credentials
 
+Copy the example file:
+
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and add your own Spotify Developer app credentials.
+On Windows PowerShell:
 
-## 3. Start the API
+```powershell
+copy .env.example .env
+```
+
+Edit `.env` and add your own Spotify Developer app credentials:
+
+```dotenv
+SPOTIFY_CLIENT_ID=your_spotify_client_id
+SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback
+SPOTIFY_PUBLIC=false
+```
+
+Do not share or commit `.env`.
+
+## 3. Start the app
 
 ```bash
 docker compose up -d --build
+```
+
+Check it:
+
+```bash
 curl http://127.0.0.1:5150/health
+```
+
+Open API docs:
+
+```text
+http://127.0.0.1:5150/docs
 ```
 
 ## 4. Build the sample playlist
@@ -98,6 +131,8 @@ curl -X POST http://127.0.0.1:5150/build/example-open-road \
   -d '{"dry_run":false,"search_limit":50}'
 ```
 
+The first Spotify action will require the user to authorize their own Spotify account.
+
 ## 5. Add your own playlist
 
 Create a CSV under `playlists/` with exactly this header:
@@ -106,7 +141,15 @@ Create a CSV under `playlists/` with exactly this header:
 Title,Artist,Album,Year
 ```
 
-Example filename:
+Example:
+
+```csv
+Title,Artist,Album,Year
+Take On Me,a-ha,Hunting High and Low,1985
+Girls Just Want to Have Fun,Cyndi Lauper,She's So Unusual,1983
+```
+
+Save it as:
 
 ```text
 playlists/my_party_mix.csv
@@ -126,14 +169,82 @@ curl -X POST http://127.0.0.1:5150/build/my-party-mix \
   -d '{"dry_run":false,"search_limit":50}'
 ```
 
-To update the same Spotify playlist later, save its Spotify playlist ID in `config/playlist_targets.csv`.
+## 6. Update the same Spotify playlist later
+
+After Spotify creates a playlist, copy its playlist ID into `config/playlist_targets.csv`:
+
+```csv
+playlist_key,playlist_id,playlist_name
+my-party-mix,SPOTIFY_PLAYLIST_ID,My Party Mix
+```
+
+Then sync missing tracks into the same playlist:
+
+```bash
+curl -X POST http://127.0.0.1:5150/sync/my-party-mix \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run":false,"search_limit":50}'
+```
+
+## Safety notes
+
+- One installation is intended for one Spotify account.
+- Sync is additive: it can add missing tracks and rename a playlist, but it does not remove tracks or reorder Spotify playlists.
+- The API has no authentication yet. Keep port `5150` on a trusted network unless authentication and restricted CORS are added.
+- Do not share `.env`, `.spotify_token_cache`, logs with secrets, screenshots containing secrets, or real playlist IDs unless intended.
+MD
+
+cat > "$OUT_DIR/QUICKSTART.md" <<'MD'
+# Quickstart
+
+This template is platform-neutral. It does not require Portainer, Proxmox, Synology, a NAS, or n8n.
+
+## Requirements
+
+- Docker Compose
+- A Spotify account
+- A Spotify Developer app with redirect URI: `http://127.0.0.1:8888/callback`
+
+## Start
+
+```bash
+cp .env.example .env
+# edit .env with your own Spotify credentials
+docker compose up -d --build
+curl http://127.0.0.1:5150/health
+```
+
+On Windows PowerShell, use:
+
+```powershell
+copy .env.example .env
+```
+
+## Build sample playlist
+
+```bash
+curl -X POST http://127.0.0.1:5150/build/example-open-road \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run":false,"search_limit":50}'
+```
+
+## CSV format
+
+Every playlist CSV must use exactly:
+
+```csv
+Title,Artist,Album,Year
+```
+
+Put CSV files under `playlists/`.
 MD
 
 cat > "$OUT_DIR/.template-export-notes.txt" <<'TXT'
 Generated by scripts/export-shareable-template.sh.
 Review this folder before sharing.
-Do not copy real .env files, token caches, private reports, or personal playlist IDs into this package.
+This clean export intentionally excludes Portainer, Proxmox, Synology/NAS, n8n, and other host-specific assumptions.
+Do not copy real .env files, token caches, private reports, personal playlists, or personal playlist IDs into this package.
 TXT
 
-printf 'Created clean template package: %s\n' "$OUT_DIR"
+printf 'Created clean platform-neutral template package: %s\n' "$OUT_DIR"
 printf 'Review it, then zip or publish that folder as a separate template repo.\n'
