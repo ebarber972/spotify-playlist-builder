@@ -1,4 +1,4 @@
-playlist_key,playlist_id,playlist_name
+playlist_key,playlist_id,playlist_name,csv_file
 80s-rap-hip-hop-new-jack-v2,2vCiOHJhbjasHeZGioitb1,80s Rap Hip-Hop & New Jack | The Sony Walkman Session
 loud-deep-bass,6APMKy0l9Yhf8GQY0g2s2X,Loud Deep Bass | The Sony Walkman Session
 new-jack-club-rnb,6bemyOczTcY8wNcTMu2Nse,New Jack Club R&B | The Sony Walkman Session
@@ -12,7 +12,7 @@ caribbean-island-vibes,1S9XMUHp0IIWUiKdKjNccf,Caribbean Island Vibes | The Sony 
 roq-of-the-80s,1RCKX5JlZW5S6lDj315lMj,ROQ Of The 80's | The Sony Walkman Session
 open-road-anthems,6GfOljTPLPXFWTnsjT7kBP,Open Road Anthems | The Sony Walkman Session
 beatles-across-the-universe,4xfibc2QCyTkGTXe6SHdvg,Beatles Across The Universe | The Sony Walkman Session
-hair-metal,4cT7P4FoqzMpkBAGX1adto,Arena Rock & Hair Metal | The Sony Walkman Session
+hair-metal,4cT7P4FoqzMpkBAGX1adto,Arena Rock & Hair Metal | The Sony Walkman Session,playlists/hair_metal_master_database.csv
 funk-metal-groove-rock,6KENws5HBkA6NKQeSJqBr8,Funk Metal Groove Rock | The Sony Walkman Session
 jimmy-buffett-boat-drinks,18q9Ulep7IKQU8jHfS1B9E,Jimmy Buffett Boat Drinks | The Sony Walkman Session
 lake-day,2tVAVVrrCfwPbK69i4uLTW,Lake Day | The Sony Walkman Session
