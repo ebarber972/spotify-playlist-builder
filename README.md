@@ -211,6 +211,11 @@ curl -X POST http://127.0.0.1:5150/sync/open-road-anthems \
 
 A submitted job normally returns `queued`. The single queue worker starts jobs in order and runs only one Spotify-hitting subprocess at a time.
 
+If the sync route is called for a playlist that has no saved Spotify playlist
+ID yet, the API automatically promotes that first request to a build. This
+allows webhook and n8n callers to use one route safely for both new and existing
+playlists.
+
 ### Cancel a job
 
 ```text
