@@ -66,7 +66,6 @@ playlist_name_for_key() {
     /^[[:space:]]*#/ { next }
     $1 == key {
       name = $3
-      for (i = 4; i <= NF; i++) name = name "," $i
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
       print name
       exit
@@ -367,7 +366,9 @@ if [ -n "$UPDATED_PLAYLISTS" ]; then
   echo "Updated playlist CSVs detected:"
   echo "$UPDATED_PLAYLISTS"
   echo "$UPDATED_PLAYLISTS" | while IFS= read -r csv_file; do
-    [ -z "$csv_file" ] || start_sync "$csv_file"
+    # If a prior first-build event was missed, an updated orphaned CSV should
+    # be built now instead of being skipped for not having a playlist ID.
+    [ -z "$csv_file" ] || start_new_playlist "$csv_file"
   done
 fi
 
