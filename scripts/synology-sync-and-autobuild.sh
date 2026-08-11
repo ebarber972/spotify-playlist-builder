@@ -74,7 +74,7 @@ playlist_name_for_key() {
 }
 
 default_playlist_name_for_key() {
-  printf '%s | The Sony Walkman Session\n' "$(humanize_key "$1")"
+  printf '%s | The Sony Walkman Sessions\n' "$(humanize_key "$1")"
 }
 
 target_csv_for_key() {
